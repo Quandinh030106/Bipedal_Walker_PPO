@@ -2,13 +2,14 @@ import os
 import sys
 import json
 import time
+import asyncio
 import subprocess
 import threading
 import signal
 import numpy as np
 import torch
 import gymnasium as gym
-from fastapi import FastAPI, Request, BackgroundTasks, HTTPException
+from fastapi import FastAPI, Request, BackgroundTasks, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -61,6 +62,9 @@ class LiveSimulator:
         self.total_reward = 0.0
         self.steps = 0
         self.is_active = False
+        self.noise = 0.0
+        self.wind = 0.0
+        self.episode = 0
 
     def initialize(self):
         model_path = "models/best_model.pth"
@@ -75,7 +79,7 @@ class LiveSimulator:
         self.running_ms = RunningMeanStd(shape=(Config.STATE_DIM,)) if Config.NORMALIZE_OBS else None
         
         # Tải mô hình
-        load_checkpoint(self.agent, self.running_ms, model_path, Config.DEVICE)
+        self.episode = load_checkpoint(self.agent, self.running_ms, model_path, Config.DEVICE)
         self.agent.network.eval()
         
         self.is_active = True
@@ -89,7 +93,7 @@ class LiveSimulator:
         self.steps = 0
         return self.state.tolist()
 
-    def step(self):
+    def step(self, wind: float = 0.0):
         if not self.is_active or self.state is None:
             raise HTTPException(status_code=400, detail="Simulator not initialized. Run reset first.")
         
@@ -108,8 +112,16 @@ class LiveSimulator:
             action = action_mean.squeeze(0).cpu().numpy()
             
         clipped_action = np.clip(action, -1.0, 1.0)
+
+        # 3. Inject wind vào action trước khi step
+        # Wind tác động lên hip joints (action[0] và action[2]) với hệ số nhỏ
+        if wind != 0.0:
+            wind_effect = float(wind) * 0.1
+            clipped_action[0] = np.clip(clipped_action[0] + wind_effect, -1.0, 1.0)
+            if len(clipped_action) > 2:
+                clipped_action[2] = np.clip(clipped_action[2] + wind_effect, -1.0, 1.0)
         
-        # 3. Tương tác môi trường
+        # 4. Tương tác môi trường
         next_state, reward, terminated, truncated, info = self.env.step(clipped_action)
         done = terminated or truncated
         
@@ -344,7 +356,7 @@ def get_evaluate_status():
     return eval_status
 
 
-# --- INTERACTIVE SIMULATION ENDPOINTS ---
+# --- INTERACTIVE SIMULATION ENDPOINTS (REST) ---
 
 @app.post("/api/sim/reset")
 def sim_reset():
@@ -358,7 +370,7 @@ def sim_reset():
 @app.post("/api/sim/step")
 def sim_step():
     try:
-        step_result = simulator.step()
+        step_result = simulator.step(wind=simulator.wind)
         return step_result
     except Exception as e:
         return JSONResponse(status_code=500, content={"message": str(e)})
@@ -372,6 +384,13 @@ def sim_close():
 
 @app.get("/api/config")
 def get_config():
+    # Khởi tạo simulator nếu chưa active để load checkpoint thực tế và lấy đúng số episode
+    if not simulator.is_active:
+        try:
+            simulator.initialize()
+        except Exception as e:
+            print(f"Proactive simulator initialization failed: {e}")
+
     return {
         "ENV_NAME": Config.ENV_NAME,
         "STATE_DIM": Config.STATE_DIM,
@@ -385,8 +404,170 @@ def get_config():
         "TOTAL_TIMESTEPS": Config.TOTAL_TIMESTEPS,
         "NUM_STEPS": Config.NUM_STEPS,
         "MINIBATCH_SIZE": Config.MINIBATCH_SIZE,
-        "UPDATE_EPOCHS": Config.UPDATE_EPOCHS
+        "UPDATE_EPOCHS": Config.UPDATE_EPOCHS,
+        "EPISODE": simulator.episode
     }
+
+
+# --- WEBSOCKET ENDPOINT: /ws/sim ---
+
+@app.websocket("/ws/sim")
+async def websocket_sim(websocket: WebSocket):
+    """
+    WebSocket endpoint cho live simulation với noise/wind injection.
+
+    Protocol:
+    - Client gửi lần đầu: {"action": "reset", "noise": 0.0, "wind": 0.0, "gravity": 1.0}
+    - Server bắt đầu vòng lặp simulation, mỗi step gửi state về client
+    - Client có thể gửi bất kỳ lúc nào:
+        {"action": "set_params", "noise": N, "wind": W}  -> cập nhật params
+        {"action": "reset", "noise": N, "wind": W}       -> reset episode
+        {"action": "close"}                               -> đóng kết nối
+    - Khi done=True, server gửi {"done": True, ...} và chờ lệnh reset mới
+    """
+    await websocket.accept()
+
+    # Các biến cục bộ cho session này
+    noise = 0.0
+    wind = 0.0
+    session_active = True
+
+    try:
+        while session_active:
+            # Chờ lệnh đầu tiên hoặc lệnh reset tiếp theo từ client
+            raw = await websocket.receive_text()
+            try:
+                msg = json.loads(raw)
+            except json.JSONDecodeError:
+                await websocket.send_json({"error": "Invalid JSON message"})
+                continue
+
+            action = msg.get("action", "")
+
+            if action == "close":
+                await websocket.send_json({"message": "Connection closed by client"})
+                break
+
+            if action != "reset":
+                await websocket.send_json({"error": f"Expected 'reset' action, got '{action}'"})
+                continue
+
+            # Cập nhật params từ lệnh reset
+            noise = float(msg.get("noise", 0.0))
+            wind = float(msg.get("wind", 0.0))
+            # gravity tham số hiện không được gymnasium BipedalWalker hỗ trợ trực tiếp
+            # nên chỉ lưu để tương lai mở rộng
+            gravity = float(msg.get("gravity", 1.0))
+
+            # Reset simulator (blocking nhưng nhanh)
+            try:
+                obs = simulator.reset()
+                simulator.noise = noise
+                simulator.wind = wind
+            except Exception as e:
+                await websocket.send_json({"error": f"Simulator reset failed: {str(e)}"})
+                continue
+
+            # Gửi trạng thái ban đầu
+            await websocket.send_json({
+                "observation": obs,
+                "reward": 0.0,
+                "done": False,
+                "total_reward": 0.0,
+                "steps": 0
+            })
+
+            # --- VÒNG LẶP SIMULATION ---
+            episode_done = False
+            while not episode_done and session_active:
+                # Thực hiện một step simulation (chạy đồng bộ trong thread pool
+                # để không block event loop)
+                try:
+                    step_result = await asyncio.get_event_loop().run_in_executor(
+                        None, lambda: simulator.step(wind=wind)
+                    )
+                except Exception as e:
+                    await websocket.send_json({"error": f"Step failed: {str(e)}"})
+                    break
+
+                # Inject noise vào observation nếu noise > 0
+                if noise > 0.0:
+                    obs_arr = np.array(step_result["observation"], dtype=np.float32)
+                    obs_arr = obs_arr + np.random.normal(0, noise, size=obs_arr.shape)
+                    step_result["observation"] = obs_arr.tolist()
+
+                # Gửi state về client
+                await websocket.send_json(step_result)
+
+                if step_result["done"]:
+                    # Gửi thêm thông báo done rõ ràng và break vòng lặp step
+                    await websocket.send_json({
+                        "done": True,
+                        "total_reward": step_result["total_reward"],
+                        "steps": step_result["steps"],
+                        "message": "Episode finished. Send 'reset' to start a new episode."
+                    })
+                    episode_done = True
+                    break
+
+                # Delay 50ms mỗi step (20 FPS)
+                await asyncio.sleep(0.05)
+
+                # Kiểm tra incoming message NON-BLOCKING trong khi simulation đang chạy
+                try:
+                    raw_incoming = await asyncio.wait_for(
+                        websocket.receive_text(), timeout=0.001
+                    )
+                    incoming = json.loads(raw_incoming)
+                    incoming_action = incoming.get("action", "")
+
+                    if incoming_action == "set_params":
+                        noise = float(incoming.get("noise", noise))
+                        wind = float(incoming.get("wind", wind))
+                        simulator.noise = noise
+                        simulator.wind = wind
+
+                    elif incoming_action == "reset":
+                        # Client muốn reset ngay, thoát vòng lặp step
+                        noise = float(incoming.get("noise", noise))
+                        wind = float(incoming.get("wind", wind))
+                        # Reset simulator và tiếp tục vòng lặp ngoài
+                        obs = simulator.reset()
+                        simulator.noise = noise
+                        simulator.wind = wind
+                        await websocket.send_json({
+                            "observation": obs,
+                            "reward": 0.0,
+                            "done": False,
+                            "total_reward": 0.0,
+                            "steps": 0
+                        })
+                        episode_done = True  # thoát vòng lặp step hiện tại
+
+                    elif incoming_action == "close":
+                        session_active = False
+                        episode_done = True
+
+                except asyncio.TimeoutError:
+                    # Không có message từ client, tiếp tục simulation bình thường
+                    pass
+                except json.JSONDecodeError:
+                    # Bỏ qua message không hợp lệ
+                    pass
+
+            # Sau khi episode_done và chưa có lệnh reset mới,
+            # vòng lặp ngoài sẽ chờ lệnh reset từ client (await receive_text() ở đầu)
+
+    except WebSocketDisconnect:
+        # Client ngắt kết nối đột ngột
+        pass
+    except Exception as e:
+        # Lỗi không xác định, ghi log nhưng không crash server
+        try:
+            await websocket.send_json({"error": f"Internal server error: {str(e)}"})
+        except Exception:
+            pass
+
 
 if __name__ == "__main__":
     import uvicorn

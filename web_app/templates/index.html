@@ -6,271 +6,166 @@
     <title>Bipedal Walker PPO Premium Control Hub</title>
     <!-- CSS link -->
     <link rel="stylesheet" href="/static/css/style.css">
-    <!-- Chart.js and FontAwesome for graphics -->
+    <!-- Chart.js for live graphics -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
-    <div class="app-container">
-        <!-- Dashboard Header -->
-        <header>
-            <div class="brand">
-                <div class="brand-logo">
-                    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                        <!-- Futuristic walking robot leg icon -->
-                        <path d="M5 2h4v5H5zm10 0h4v5h-4zM2 9h20v2H2zm3 4h4v9H5zm11 0h4v9h-4z" />
-                    </svg>
-                </div>
-                <div class="brand-info">
-                    <h1>Bipedal Walker PPO</h1>
-                    <p>Advanced Reinforcement Learning Deep Control Panel • graduation_defense_v1.0</p>
-                </div>
+    <!-- App Header -->
+    <header class="app-header">
+        <div class="header-brand">
+            <div class="logo">🤖</div>
+            <div>
+                <h1>Bipedal Walker PPO</h1>
+                <p class="subtitle">Advanced Reinforcement Learning Deep Control Panel • graduation_defense_v1.1</p>
             </div>
-            
-            <div class="system-status">
-                <div class="status-badge">
-                    <div id="train-status-dot" class="status-dot"></div>
-                    <span>Training: <strong id="train-status-text">Idle</strong></span>
-                </div>
-                <div class="status-badge">
-                    <div id="sim-status-dot" class="status-dot"></div>
-                    <span>Interactive Sim: <strong id="sim-status-text">Inactive</strong></span>
-                </div>
-            </div>
-        </header>
+        </div>
+        
+        <!-- Connection Badge -->
+        <div id="connection-badge" class="connection-badge disconnected">
+            <div id="status-dot" class="dot"></div>
+            <span id="status-text">⬤  Disconnected</span>
+        </div>
+    </header>
 
-        <!-- Main Dashboard Grid -->
-        <div class="dashboard-grid">
-            
-            <!-- LEFT COLUMN: Live Telemetry Scanner -->
-            <div class="telemetry-container" style="display: flex; flex-direction: column; gap: 2rem;">
-                
-                <!-- Card 1: Visualizer Canvas -->
-                <div class="glass-card">
-                    <div class="card-header">
-                        <div class="card-title">
-                            <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25m18 0A2.25 2.25 0 0018.75 3H5.25A2.25 2.25 0 003 5.25m18 0V12a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 12V5.25"></path>
-                            </svg>
-                            Interactive Robot Telemetry Scanner
-                        </div>
-                        <div class="btn-group" style="margin-top: 0;">
-                            <button id="btn-sim-toggle" class="btn btn-primary" onclick="toggleInteractiveSim()">
-                                <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z"></path></svg>
-                                Start Live Scan
-                            </button>
-                            <button id="btn-sim-reset" class="btn btn-secondary" onclick="resetInteractiveSim()" disabled>
-                                Reset
-                            </button>
-                        </div>
-                    </div>
-
-                    <div class="canvas-wrapper">
-                        <canvas id="telemetryCanvas" width="600" height="337"></canvas>
-                        <div class="canvas-overlay">
-                            <div class="overlay-stat">X-Velocity: <span id="telemetry-vx">0.00</span> m/s</div>
-                            <div class="overlay-stat">Y-Velocity: <span id="telemetry-vy">0.00</span> m/s</div>
-                            <div class="overlay-stat">Hull Angle: <span id="telemetry-angle">0.00</span>°</div>
-                            <div class="overlay-stat">Total Reward: <span id="telemetry-reward">0.00</span></div>
-                        </div>
-                    </div>
+    <!-- Main Dashboard Grid -->
+    <main class="app-main">
+        
+        <!-- LEFT COLUMN: Live Telemetry Scanner -->
+        <section class="canvas-panel">
+            <!-- Glass Card 1: Interactive Robot Canvas -->
+            <div class="glass-card" style="padding: 20px;">
+                <div class="canvas-wrapper">
+                    <canvas id="robot-canvas"></canvas>
                     
-                    <!-- Sensor readouts -->
-                    <div class="sensor-dashboard" style="margin-top: 1.5rem;">
-                        <div class="sensor-card">
-                            <div class="sensor-title">Left Hip (Hip 1)</div>
-                            <div id="readout-hip1" class="sensor-value cyan">0.00 rad</div>
-                        </div>
-                        <div class="sensor-card">
-                            <div class="sensor-title">Left Knee (Knee 1)</div>
-                            <div id="readout-knee1" class="sensor-value cyan">0.00 rad</div>
-                        </div>
-                        <div class="sensor-card">
-                            <div class="sensor-title">Right Hip (Hip 2)</div>
-                            <div id="readout-hip2" class="sensor-value pink">0.00 rad</div>
-                        </div>
-                        <div class="sensor-card">
-                            <div class="sensor-title">Right Knee (Knee 2)</div>
-                            <div id="readout-knee2" class="sensor-value pink">0.00 rad</div>
-                        </div>
+                    <!-- Canvas Idle Overlay -->
+                    <div id="canvas-overlay" class="canvas-overlay">
+                        <div class="overlay-icon">🤖</div>
+                        <div class="overlay-text">Telemetry Scanner Offline</div>
+                        <div class="overlay-sub">Click "Launch Live Simulation" to establish WebSocket telemetry link</div>
                     </div>
 
-                    <div class="sensor-dashboard" style="margin-top: 1rem;">
-                        <div class="sensor-card">
-                            <div class="sensor-title">L1 Contact</div>
-                            <div id="readout-contact1" class="sensor-value green">OFF</div>
-                        </div>
-                        <div class="sensor-card">
-                            <div class="sensor-title">L2 Contact</div>
-                            <div id="readout-contact2" class="sensor-value pink">OFF</div>
-                        </div>
-                        <div class="sensor-card">
-                            <div class="sensor-title">Tilt Offset</div>
-                            <div id="readout-tilt" class="sensor-value violet">0.00 rad</div>
-                        </div>
-                        <div class="sensor-card">
-                            <div class="sensor-title">Sim Steps</div>
-                            <div id="readout-steps" class="sensor-value green">0</div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Card 2: Training Curve Chart -->
-                <div class="glass-card">
-                    <div class="card-header">
-                        <div class="card-title">
-                            <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 18L9 11.25l4.306 4.307a11.95 11.95 0 015.814-5.519l2.74-1.22m0 0l-5.94-2.28m5.94 2.28l-2.28 5.941"></path>
-                            </svg>
-                            Learning Performance Graph (Real-time)
-                        </div>
-                    </div>
-                    <div class="chart-wrapper">
-                        <canvas id="performanceChart"></canvas>
+                    <!-- FALLEN Overlay -->
+                    <div id="fallen-overlay" class="fallen-overlay">
+                        FALLEN!
                     </div>
                 </div>
             </div>
 
-            <!-- RIGHT COLUMN: Control, Logs, Video Simulator -->
-            <div class="telemetry-container" style="display: flex; flex-direction: column; gap: 2rem;">
+            <!-- Glass Card 2: Episode Stat Bar -->
+            <div class="stat-bar">
+                <div class="stat-item">
+                    <span class="stat-label">Telemetry Reward</span>
+                    <span id="stat-reward" class="stat-value accent">0.0</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Sim Steps</span>
+                    <span id="stat-steps" class="stat-value">0</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Best Reward</span>
+                    <span id="stat-best" class="stat-value positive">-100.0</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Scans / Ep</span>
+                    <span id="stat-episodes" class="stat-value">0</span>
+                </div>
+            </div>
+
+            <!-- Glass Card 3: Learning Performance Graph -->
+            <div class="glass-card chart-wrapper">
+                <div class="chart-header">
+                    <span class="chart-title">Real-Time Simulation History (Sliding Window)</span>
+                    <span class="stat-label" style="color: var(--accent-purple);">WebSocket Push Data</span>
+                </div>
+                <div style="height: 160px; position: relative;">
+                    <canvas id="reward-chart"></canvas>
+                </div>
+            </div>
+        </section>
+
+        <!-- RIGHT COLUMN: Control, Logs, Video Simulator -->
+        <aside class="sidebar">
+            
+            <!-- Glass Card 4: Control Panel -->
+            <div class="glass-card control-panel">
+                <h2 class="panel-title">🎛️ Live Environment Stress Lab</h2>
                 
-                <!-- Card 3: Agent Training Control -->
-                <div class="glass-card">
-                    <div class="card-header">
-                        <div class="card-title">
-                            <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M10.343 3.94c.09-.542.56-.94 1.11-.94h1.093c.55 0 1.02.398 1.11.94l.149.894c.07.424.384.764.78.93.398.164.855.142 1.205-.108l.737-.527a1.125 1.125 0 011.45.12l.773.774c.39.389.44 1.002.12 1.45l-.527.737c-.25.35-.272.806-.107 1.204.165.397.505.71.93.78l.893.15c.543.09.94.56.94 1.109v1.094c0 .55-.397 1.02-.94 1.11l-.893.149c-.425.07-.765.383-.93.78-.165.398-.143.854.107 1.204l.527.738a1.125 1.125 0 01-.12 1.45l-.774.773a1.125 1.125 0 01-1.449.12l-.738-.527c-.35-.25-.806-.272-1.203-.107-.397.165-.71.505-.781.929l-.149.894c-.09.542-.56.94-1.11.94h-1.094c-.55 0-1.019-.398-1.11-.94l-.148-.894c-.071-.424-.383-.764-.78-.93-.398-.164-.854-.142-1.204.108l-.738.527a1.125 1.125 0 01-1.45-.12l-.773-.774a1.125 1.125 0 01-.12-1.45l.527-.737c.25-.35.273-.806.108-1.204-.165-.397-.505-.71-.93-.78l-.894-.15c-.542-.09-.94-.56-.94-1.109v-1.094c0-.55.398-1.02.94-1.11l.894-.149c.424-.07.765-.383.93-.78.165-.398.143-.854-.108-1.204l-.526-.738a1.125 1.125 0 01.12-1.45l.773-.773a1.125 1.125 0 011.45-.12l.737.527c.35.25.807.272 1.204.107.397-.165.71-.505.78-.929l.15-.894z"></path>
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
-                            </svg>
-                            PPO Agent Process Controller
+                <!-- Sliders -->
+                <div class="control-group">
+                    <div class="slider-row">
+                        <div class="slider-label-row">
+                            <span class="slider-name">Observation Noise (State Noise)</span>
+                            <span id="val-noise" class="slider-val">0.00</span>
                         </div>
+                        <input type="range" id="slider-noise" min="0" max="0.3" step="0.02" value="0">
                     </div>
-                    
-                    <div style="display: flex; flex-direction: column; gap: 1rem;">
-                        <div class="btn-group">
-                            <button id="btn-train-start" class="btn btn-success" onclick="startTraining()">
-                                <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z"></path></svg>
-                                Launch Training Subprocess
-                            </button>
-                            <button id="btn-train-stop" class="btn btn-danger" onclick="stopTraining()" disabled>
-                                <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M5.25 7.5A2.25 2.25 0 017.5 5.25h9a2.25 2.25 0 012.25 2.25v9a2.25 2.25 0 01-2.25 2.25h-9a2.25 2.25 0 01-2.25-2.25v-9z"></path></svg>
-                                Stop Process
-                            </button>
-                        </div>
 
-                        <!-- Statistics Grid -->
-                        <div class="sensor-dashboard" style="margin-top: 0.5rem;">
-                            <div class="sensor-card">
-                                <div class="sensor-title">Steps</div>
-                                <div id="stat-steps" class="sensor-value">0</div>
-                            </div>
-                            <div class="sensor-card">
-                                <div class="sensor-title">Episodes</div>
-                                <div id="stat-episodes" class="sensor-value">0</div>
-                            </div>
-                            <div class="sensor-card">
-                                <div class="sensor-title">Last Reward</div>
-                                <div id="stat-reward" class="sensor-value">0.0</div>
-                            </div>
-                            <div class="sensor-card">
-                                <div class="sensor-title">Mean (10)</div>
-                                <div id="stat-mean" class="sensor-value green">0.0</div>
-                            </div>
+                    <div class="slider-row">
+                        <div class="slider-label-row">
+                            <span class="slider-name">Wind Force (Action Disturbance)</span>
+                            <span id="val-wind" class="slider-val">0.00</span>
                         </div>
+                        <input type="range" id="slider-wind" min="-1.5" max="1.5" step="0.1" value="0">
+                    </div>
+
+                    <div class="slider-row">
+                        <div class="slider-label-row">
+                            <span class="slider-name">Gravity Multiplier</span>
+                            <span id="val-gravity" class="slider-val">1.0g</span>
+                        </div>
+                        <input type="range" id="slider-gravity" min="0.5" max="2.0" step="0.1" value="1.0">
                     </div>
                 </div>
 
-                <!-- Card 4: Terminal console -->
-                <div class="glass-card terminal-card">
-                    <div class="card-header">
-                        <div class="card-title">
-                            <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M17.25 6.75L22.5 12l-5.25 5.25m-10.5 0L1.5 12l5.25-5.25m7.5-3l-4.5 16.5"></path>
-                            </svg>
-                            Live Subprocess Output Logs
-                        </div>
-                    </div>
-                    <div id="terminalWindow" class="terminal-window">
-                        <div class="terminal-line">[INFO] Click "Launch Training Subprocess" or "Start Live Scan" to begin.</div>
+                <!-- Simulation Speed -->
+                <div class="control-group" style="margin-bottom: 24px;">
+                    <span class="slider-name" style="margin-bottom: 6px;">Simulation Speed Engine</span>
+                    <div class="speed-selector">
+                        <button class="speed-btn active" data-speed="1">Realtime (1x)</button>
+                        <button class="speed-btn" data-speed="2">Fast (2x)</button>
+                        <button class="speed-btn" data-speed="5">Hyper (5x)</button>
                     </div>
                 </div>
 
-                <!-- Card 5: Video simulator -->
-                <div class="glass-card">
-                    <div class="card-header">
-                        <div class="card-title">
-                            <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M6 20.25h12A2.25 2.25 0 0020.25 18V6A2.25 2.25 0 0018.75 3.75H5.25A2.25 2.25 0 003 6v12a2.25 2.25 0 002.25 2.25z"></path>
-                            </svg>
-                            Recorded Simulation Video
-                        </div>
-                        <button id="btn-eval" class="btn btn-primary" onclick="runEvaluation()" style="padding: 0.5rem 1rem; font-size: 0.85rem;">
-                            Render Walk Simulation
+                <!-- Action Buttons -->
+                <div class="action-buttons">
+                    <button id="btn-run" class="btn btn-primary">
+                        ▶  Launch Live Simulation
+                    </button>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                        <button id="btn-pause" class="btn btn-secondary" disabled>
+                            ⏸  Pause
+                        </button>
+                        <button id="btn-reset" class="btn btn-danger">
+                            ↺  Reset Ep
                         </button>
                     </div>
-                    <div class="video-panel">
-                        <div class="video-container">
-                            {% if video_exists %}
-                            <video id="demoVideo" controls>
-                                <source src="/static/demo.mp4" type="video/mp4">
-                                Your browser does not support the video tag.
-                            </video>
-                            {% else %}
-                            <div id="video-placeholder" class="no-video-placeholder">
-                                <svg fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                    <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z"></path>
-                                </svg>
-                                <span>No simulation video has been generated yet.</span>
-                            </div>
-                            {% endif %}
-                        </div>
-                        <div id="eval-progress-bar" style="color: var(--text-muted); font-size: 0.85rem; width: 100%; text-align: center; display: none;">
-                            Rendering: <span id="eval-progress-text">Inactive</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Card 6: static config -->
-                <div class="glass-card">
-                    <div class="card-header">
-                        <div class="card-title">
-                            <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.43l-1.003.828c-.293.241-.438.613-.43.992a7.723 7.723 0 010 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.954.26 1.43l-1.297 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.43l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.992l-1.004-.827a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.645-.869l.214-1.28z"></path>
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
-                            </svg>
-                            Model Architecture Hyperparameters
-                        </div>
-                    </div>
-                    <div class="config-grid">
-                        <div class="config-item">
-                            <span class="config-label">Environment</span>
-                            <span class="config-val">{{ config.env_name }}</span>
-                        </div>
-                        <div class="config-item">
-                            <span class="config-label">Learning Rate</span>
-                            <span class="config-val">{{ config.learning_rate }}</span>
-                        </div>
-                        <div class="config-item">
-                            <span class="config-label">Gamma (Discount)</span>
-                            <span class="config-val">{{ config.gamma }}</span>
-                        </div>
-                        <div class="config-item">
-                            <span class="config-label">GAE Lambda</span>
-                            <span class="config-val">{{ config.gae_lambda }}</span>
-                        </div>
-                        <div class="config-item">
-                            <span class="config-label">Minibatch Size</span>
-                            <span class="config-val">{{ config.num_steps }} steps</span>
-                        </div>
-                        <div class="config-item">
-                            <span class="config-label">Device Mode</span>
-                            <span class="config-val" style="color: var(--primary);">{{ config.device }}</span>
-                        </div>
-                    </div>
                 </div>
             </div>
 
-        </div>
-    </div>
+            <!-- Glass Card 5: Static Model Info -->
+            <div class="glass-card model-info">
+                <h2 class="panel-title" style="margin-bottom: 12px;">🧠 Model Neural Diagnostics</h2>
+                <div class="info-row">
+                    <span class="info-key">PPO Model Target</span>
+                    <span class="info-val highlight">best_model.pth (Ep 677)</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-key">Continuous Actions</span>
+                    <span class="info-val">4x Joints [-1.0, 1.0]</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-key">Observation Vector</span>
+                    <span class="info-val">24x Sensory Inputs</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-key">Network Policy</span>
+                    <span class="info-val">Deterministic Actor</span>
+                </div>
+            </div>
+        </aside>
+
+    </main>
 
     <!-- JS Link -->
     <script src="/static/js/main.js"></script>

@@ -1,593 +1,793 @@
-// Global variables for training and evaluation polling
-let trainPollInterval = null;
-let evalPollInterval = null;
-let isInteractiveSimRunning = false;
-let simInterval = null;
-let scrollOffset = 0;
-let cumulativeSimReward = 0.0;
+/* ============================================================
+   BIPEDAL WALKER PPO — Main Application Logic
+   WebSocket Client + Humanoid Canvas Renderer + Chart.js
+   ============================================================ */
 
-// Chart.js Instance
-let performanceChart = null;
+// --- Constants ---
+const WS_URL = `ws://${window.location.host}/ws/sim`;
+const STEP_INTERVAL_MS = { 1: 60, 2: 30, 5: 12 };
 
-// Canvas details
-const canvas = document.getElementById("telemetryCanvas");
-const ctx = canvas.getContext("2d");
+// --- State ---
+let ws = null;
+let isRunning = false;
+let isPaused = false;
+let currentSpeed = 1;
+let episodeRewards = [];
+let currentEpisodeReward = 0;
+let currentSteps = 0;
+let bestReward = -Infinity;
+let params = { noise: 0.0, wind: 0.0, gravity: 1.0 };
+let rewardChart = null;
+let lastObs = null;
+let posX = 0;
+let terrainSeed = Math.random() * 1000;
+let needsChartReset = true;
 
-// Joint dimensions for visualizer
-const L1 = 45; // Thigh length
-const L2 = 40; // Shin length
-const HULL_W = 60;
-const HULL_H = 26;
 
-// Color palette
-const COLORS = {
-    bg: "#07080d",
-    hullOutline: "#8b5cf6",
-    hullFill: "rgba(139, 92, 246, 0.2)",
-    leg1: "#00e5ff",
-    leg2: "#ec4899",
-    lidarGreen: "rgba(16, 185, 129, 0.25)",
-    lidarRed: "rgba(239, 68, 68, 0.7)",
-    ground: "#1f2937",
-    grid: "rgba(255, 255, 255, 0.03)"
-};
+// --- DOM refs ---
+const canvas = document.getElementById('robot-canvas');
+const ctx = canvas.getContext('2d');
+const overlay = document.getElementById('canvas-overlay');
+const fallenOverlay = document.getElementById('fallen-overlay');
+const statusBadge = document.getElementById('connection-badge');
+const statusDot = document.getElementById('status-dot');
+const statusText = document.getElementById('status-text');
 
-// --- INITIALIZE GRAPH ---
+const statReward = document.getElementById('stat-reward');
+const statSteps = document.getElementById('stat-steps');
+const statBest = document.getElementById('stat-best');
+const statEpisodes = document.getElementById('stat-episodes');
+
+const btnRun = document.getElementById('btn-run');
+const btnPause = document.getElementById('btn-pause');
+const btnReset = document.getElementById('btn-reset');
+
+const sliderNoise = document.getElementById('slider-noise');
+const sliderWind = document.getElementById('slider-wind');
+const sliderGravity = document.getElementById('slider-gravity');
+const valNoise = document.getElementById('val-noise');
+const valWind = document.getElementById('val-wind');
+const valGravity = document.getElementById('val-gravity');
+
+// ============================================================
+// CHART SETUP
+// ============================================================
 function initChart() {
-    const chartCtx = document.getElementById("performanceChart").getContext("2d");
-    performanceChart = new Chart(chartCtx, {
-        type: 'line',
-        data: {
-            labels: [],
-            datasets: [
-                {
-                    label: 'Episode Reward',
-                    data: [],
-                    borderColor: '#00e5ff',
-                    backgroundColor: 'rgba(0, 229, 255, 0.1)',
-                    borderWidth: 2,
-                    tension: 0.3,
-                    yAxisID: 'y'
-                },
-                {
-                    label: 'Mean Reward (10)',
-                    data: [],
-                    borderColor: '#8b5cf6',
-                    backgroundColor: 'rgba(139, 92, 246, 0.05)',
-                    borderWidth: 3,
-                    borderDash: [5, 5],
-                    tension: 0.3,
-                    yAxisID: 'y'
-                }
-            ]
+  const chartCtx = document.getElementById('reward-chart').getContext('2d');
+  rewardChart = new Chart(chartCtx, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [{
+        label: 'Episode Reward',
+        data: [],
+        borderColor: '#7c3aed',
+        backgroundColor: 'rgba(124, 58, 237, 0.08)',
+        borderWidth: 2,
+        tension: 0.4,
+        fill: true,
+        pointRadius: 3,
+        pointBackgroundColor: '#7c3aed',
+        pointHoverRadius: 5
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: { duration: 300 },
+      plugins: { legend: { display: false } },
+      scales: {
+        x: {
+          ticks: { color: '#475569', font: { size: 10 } },
+          grid: { color: 'rgba(255,255,255,0.04)' }
         },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: {
-                    labels: {
-                        color: '#9ca3af',
-                        font: { family: 'Outfit' }
-                    }
-                }
-            },
-            scales: {
-                x: {
-                    grid: { color: 'rgba(255, 255, 255, 0.05)' },
-                    ticks: { color: '#9ca3af', font: { family: 'Outfit' } }
-                },
-                y: {
-                    grid: { color: 'rgba(255, 255, 255, 0.05)' },
-                    ticks: { color: '#9ca3af', font: { family: 'Outfit' } },
-                    position: 'left'
-                }
-            }
+        y: {
+          ticks: { color: '#475569', font: { size: 10 } },
+          grid: { color: 'rgba(255,255,255,0.04)' }
         }
-    });
-}
-
-// --- TRAINING SUBPROCESS CONTROL ---
-
-function startTraining() {
-    fetch("/api/train/start", { method: "POST" })
-        .then(res => res.json())
-        .then(data => {
-            logToTerminal("[SYSTEM] " + data.message, "success");
-            document.getElementById("btn-train-start").disabled = true;
-            document.getElementById("btn-train-stop").disabled = false;
-            
-            // Bắt đầu vòng lặp thăm dò trạng thái huấn luyện
-            if (trainPollInterval) clearInterval(trainPollInterval);
-            trainPollInterval = setInterval(pollTrainStatus, 1000);
-        })
-        .catch(err => {
-            logToTerminal("[ERROR] Failed to start training: " + err, "error");
-        });
-}
-
-function stopTraining() {
-    fetch("/api/train/stop", { method: "POST" })
-        .then(res => res.json())
-        .then(data => {
-            logToTerminal("[SYSTEM] " + data.message, "error");
-            document.getElementById("btn-train-start").disabled = false;
-            document.getElementById("btn-train-stop").disabled = true;
-            
-            if (trainPollInterval) {
-                clearInterval(trainPollInterval);
-                trainPollInterval = null;
-            }
-            setTimeout(pollTrainStatus, 1000); // Poll một lần cuối cùng
-        })
-        .catch(err => {
-            logToTerminal("[ERROR] Failed to stop training: " + err, "error");
-        });
-}
-
-function pollTrainStatus() {
-    fetch("/api/train/status")
-        .then(res => res.json())
-        .then(data => {
-            const status = data.status;
-            const history = data.history;
-            const logs = data.logs;
-            
-            // Cập nhật giao diện Trạng thái
-            const dot = document.getElementById("train-status-dot");
-            const text = document.getElementById("train-status-text");
-            
-            if (status.is_running) {
-                dot.className = "status-dot active";
-                text.innerText = "Training Active";
-                document.getElementById("btn-train-start").disabled = true;
-                document.getElementById("btn-train-stop").disabled = false;
-            } else {
-                dot.className = "status-dot";
-                text.innerText = "Idle";
-                document.getElementById("btn-train-start").disabled = false;
-                document.getElementById("btn-train-stop").disabled = true;
-                if (trainPollInterval) {
-                    clearInterval(trainPollInterval);
-                    trainPollInterval = null;
-                }
-            }
-            
-            // Thống kê số liệu
-            document.getElementById("stat-steps").innerText = status.current_step.toLocaleString();
-            document.getElementById("stat-episodes").innerText = status.current_episode;
-            document.getElementById("stat-reward").innerText = status.latest_reward.toFixed(2);
-            document.getElementById("stat-mean").innerText = status.mean_reward_10.toFixed(2);
-            
-            // Dòng Log từ Subprocess
-            logs.forEach(line => {
-                // Kiểm tra xem dòng log đã có trong terminal chưa để tránh in trùng
-                if (!isLineInTerminal(line)) {
-                    logToTerminal(line);
-                }
-            });
-            
-            // Vẽ biểu đồ
-            if (history && history.length > 0) {
-                const labels = history.map(h => "Ep " + h.episode);
-                const rewards = history.map(h => h.reward);
-                const means = history.map(h => h.mean_reward_10);
-                
-                performanceChart.data.labels = labels;
-                performanceChart.data.datasets[0].data = rewards;
-                performanceChart.data.datasets[1].data = means;
-                performanceChart.update();
-            }
-        })
-        .catch(err => {
-            console.error("Error polling training status:", err);
-        });
-}
-
-// --- EVALUATION & SIMULATION RENDER ---
-
-function runEvaluation() {
-    document.getElementById("btn-eval").disabled = true;
-    const progressBlock = document.getElementById("eval-progress-bar");
-    const progressText = document.getElementById("eval-progress-text");
-    
-    progressBlock.style.display = "block";
-    progressText.innerText = "Initializing record environment...";
-    logToTerminal("[EVAL] Launching high-quality physics video rendering...", "success");
-    
-    fetch("/api/evaluate", { method: "POST" })
-        .then(res => res.json())
-        .then(data => {
-            if (evalPollInterval) clearInterval(evalPollInterval);
-            evalPollInterval = setInterval(pollEvalStatus, 1000);
-        })
-        .catch(err => {
-            logToTerminal("[EVAL ERROR] " + err, "error");
-            document.getElementById("btn-eval").disabled = false;
-        });
-}
-
-function pollEvalStatus() {
-    fetch("/api/evaluate/status")
-        .then(res => res.json())
-        .then(data => {
-            const progressText = document.getElementById("eval-progress-text");
-            progressText.innerText = data.progress;
-            
-            if (!data.is_running) {
-                clearInterval(evalPollInterval);
-                evalPollInterval = null;
-                document.getElementById("btn-eval").disabled = false;
-                
-                if (data.error) {
-                    logToTerminal("[EVAL ERROR] " + data.error, "error");
-                } else {
-                    logToTerminal("[EVAL] Physics rendering finished successfully! Video saved.", "success");
-                    // Reload video player to bypass browser cache
-                    const videoContainer = document.querySelector(".video-container");
-                    videoContainer.innerHTML = `
-                        <video id="demoVideo" controls autoplay loop>
-                            <source src="/static/demo.mp4?t=${Date.now()}" type="video/mp4">
-                            Your browser does not support the video tag.
-                        </video>
-                    `;
-                }
-            }
-        })
-        .catch(err => {
-            console.error("Error polling eval status:", err);
-        });
-}
-
-// --- INTERACTIVE HEADLESS SIMULATION & CANVAS DRAWING ---
-
-function toggleInteractiveSim() {
-    if (isInteractiveSimRunning) {
-        stopInteractiveSim();
-    } else {
-        startInteractiveSim();
+      }
     }
+  });
 }
 
-function startInteractiveSim() {
-    logToTerminal("[SIM] Loading neural policy and initializing headless simulator...", "success");
-    
-    fetch("/api/sim/reset", { method: "POST" })
-        .then(res => {
-            if (!res.ok) throw new Error("Check model checkpoint exists. Train PPO first!");
-            return res.json();
-        })
-        .then(data => {
-            isInteractiveSimRunning = true;
-            cumulativeSimReward = 0.0;
-            
-            // Thiết lập badge
-            document.getElementById("sim-status-dot").className = "status-dot simulating";
-            document.getElementById("sim-status-text").innerText = "Simulating Walk";
-            document.getElementById("btn-sim-toggle").innerHTML = `
-                <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M15.75 5.25v13.5m-7.5-13.5v13.5"></path></svg>
-                Stop Live Scan
-            `;
-            document.getElementById("btn-sim-reset").disabled = false;
-            
-            // Nhận quan sát đầu tiên và vẽ
-            drawSimulationFrame(data.observation);
-            
-            // Bắt đầu vòng lặp physics step (25 FPS ~ 40ms)
-            if (simInterval) clearInterval(simInterval);
-            simInterval = setInterval(stepInteractiveSim, 40);
-        })
-        .catch(err => {
-            logToTerminal("[SIM ERROR] " + err.message, "error");
-        });
+function pushEpisodeToChart(reward) {
+  const ep = episodeRewards.length;
+  rewardChart.data.labels.push(`Ep ${ep}`);
+  rewardChart.data.datasets[0].data.push(reward.toFixed(1));
+  if (rewardChart.data.labels.length > 30) {
+    rewardChart.data.labels.shift();
+    rewardChart.data.datasets[0].data.shift();
+  }
+  rewardChart.update('none');
 }
 
-function stopInteractiveSim() {
-    isInteractiveSimRunning = false;
-    if (simInterval) {
-        clearInterval(simInterval);
-        simInterval = null;
+function resetChart() {
+  if (rewardChart) {
+    rewardChart.data.labels = [];
+    rewardChart.data.datasets[0].data = [];
+    rewardChart.update();
+  }
+  episodeRewards = [];
+  statEpisodes.textContent = '0';
+  bestReward = -Infinity;
+  statBest.textContent = '-100.0';
+}
+
+// ============================================================
+// CONNECTION STATUS
+// ============================================================
+function setStatus(state) {
+  // state: 'disconnected' | 'connecting' | 'connected'
+  statusBadge.className = `connection-badge ${state}`;
+  const labels = {
+    disconnected: '⬤  Disconnected',
+    connecting:   '⬤  Connecting...',
+    connected:    '⬤  Connected'
+  };
+  statusText.textContent = labels[state] || state;
+}
+
+// ============================================================
+// WEBSOCKET
+// ============================================================
+function connectAndRun() {
+  if (ws) { ws.close(); ws = null; }
+
+  // Reset biểu đồ điểm số khi chạy hệ số mới hoặc reset
+  if (needsChartReset) {
+    resetChart();
+    needsChartReset = false;
+  }
+
+  setStatus('connecting');
+  ws = new WebSocket(WS_URL);
+
+  ws.onopen = () => {
+    setStatus('connected');
+    posX = 0;
+    terrainSeed = Math.random() * 1000;
+    // Send reset command with current params
+    sendMessage({ action: 'reset', ...params });
+    isRunning = true;
+    isPaused = false;
+    updateButtons();
+    hideOverlay();
+  };
+
+  ws.onmessage = (event) => {
+    if (isPaused) return;
+    const data = JSON.parse(event.data);
+    handleSimState(data);
+  };
+
+  ws.onerror = () => setStatus('disconnected');
+
+  ws.onclose = () => {
+    setStatus('disconnected');
+    isRunning = false;
+    updateButtons();
+  };
+}
+
+function sendMessage(obj) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(obj));
+  }
+}
+
+// ============================================================
+// SIMULATION STATE HANDLER
+// ============================================================
+function handleSimState(data) {
+  if (!data.observation) return;
+
+  lastObs = data.observation;
+  currentEpisodeReward = data.total_reward || 0;
+  currentSteps = data.steps || 0;
+
+  // Tích lũy khoảng cách vật lý posX (velX * dt) với dt = 0.05s mỗi step
+  const velX = lastObs[2] || 0;
+  posX += velX * 0.05;
+
+  // Update stats
+  updateStatValue(statReward, currentEpisodeReward.toFixed(1));
+  statSteps.textContent = currentSteps;
+
+  // Render humanoid robot
+  resizeCanvas();
+  drawScene(lastObs);
+
+  if (data.done) {
+    episodeRewards.push(currentEpisodeReward);
+    pushEpisodeToChart(currentEpisodeReward);
+    statEpisodes.textContent = episodeRewards.length;
+
+    if (currentEpisodeReward > bestReward) {
+      bestReward = currentEpisodeReward;
+      statBest.textContent = bestReward.toFixed(1);
+      statBest.parentElement.classList.add('pulse');
+      setTimeout(() => statBest.parentElement.classList.remove('pulse'), 800);
     }
-    
-    document.getElementById("sim-status-dot").className = "status-dot";
-    document.getElementById("sim-status-text").innerText = "Inactive";
-    document.getElementById("btn-sim-toggle").innerHTML = `
-        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z"></path></svg>
-        Start Live Scan
-    `;
-    document.getElementById("btn-sim-reset").disabled = true;
-    
-    fetch("/api/sim/close", { method: "POST" })
-        .then(() => logToTerminal("[SIM] Interactive simulator closed.", "error"));
-}
 
-function resetInteractiveSim() {
-    fetch("/api/sim/reset", { method: "POST" })
-        .then(res => res.json())
-        .then(data => {
-            cumulativeSimReward = 0.0;
-            logToTerminal("[SIM] Environment reset triggered.");
-            drawSimulationFrame(data.observation);
-        });
-}
-
-function stepInteractiveSim() {
-    if (!isInteractiveSimRunning) return;
-    
-    fetch("/api/sim/step", { method: "POST" })
-        .then(res => res.json())
-        .then(data => {
-            cumulativeSimReward = data.total_reward;
-            
-            // Cập nhật số liệu telemetry lên màn hình overlay
-            document.getElementById("telemetry-reward").innerText = data.total_reward.toFixed(2);
-            document.getElementById("readout-steps").innerText = data.steps;
-            
-            // Vẽ frame
-            drawSimulationFrame(data.observation);
-            
-            // Tự động loop nếu done (robot ngã hoặc hết thời gian)
-            if (data.done) {
-                logToTerminal("[SIM] Robot fell or completed epoch. Auto-resetting...", "error");
-                resetInteractiveSim();
-            }
-        })
-        .catch(err => {
-            console.error("Step sim error:", err);
-            stopInteractiveSim();
-        });
-}
-
-// --- TELEMETRY PHYSICS CANVAS RENDER ENGINE ---
-
-function drawSimulationFrame(obs) {
-    if (!obs || obs.length < 24) return;
-    
-    // Parse quan sát
-    const hullAngle = obs[0];
-    const hullVx = obs[2];
-    const hullVy = obs[3];
-    const hip1 = obs[4];
-    const knee1 = obs[6];
-    const contact1 = obs[8];
-    const hip2 = obs[9];
-    const knee2 = obs[11];
-    const contact2 = obs[13];
-    
-    // Cập nhật thông số text
-    document.getElementById("telemetry-vx").innerText = hullVx.toFixed(2);
-    document.getElementById("telemetry-vy").innerText = hullVy.toFixed(2);
-    document.getElementById("telemetry-angle").innerText = (hullAngle * 180 / Math.PI).toFixed(1);
-    
-    document.getElementById("readout-hip1").innerText = hip1.toFixed(2) + " rad";
-    document.getElementById("readout-knee1").innerText = knee1.toFixed(2) + " rad";
-    document.getElementById("readout-hip2").innerText = hip2.toFixed(2) + " rad";
-    document.getElementById("readout-knee2").innerText = knee2.toFixed(2) + " rad";
-    
-    document.getElementById("readout-contact1").innerText = contact1 > 0.5 ? "ON" : "OFF";
-    document.getElementById("readout-contact1").className = contact1 > 0.5 ? "sensor-value green" : "sensor-value text-muted";
-    document.getElementById("readout-contact2").innerText = contact2 > 0.5 ? "ON" : "OFF";
-    document.getElementById("readout-contact2").className = contact2 > 0.5 ? "sensor-value pink" : "sensor-value text-muted";
-    
-    document.getElementById("readout-tilt").innerText = hullAngle.toFixed(2) + " rad";
-    
-    // Xóa màn hình vẽ
-    ctx.fillStyle = COLORS.bg;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    
-    // Tính toán camera scrolling bằng cách tích lũy dịch chuyển theo vận tốc ngang
-    // Giúp mặt đất và robot chuyển động mượt mà tiến lên phía trước
-    scrollOffset += hullVx * 4;
-    
-    // 1. Vẽ lưới tọa độ chuyển động (Scrolling Grid)
-    ctx.strokeStyle = COLORS.grid;
-    ctx.lineWidth = 1;
-    const gridSpacing = 40;
-    const startX = -(scrollOffset % gridSpacing);
-    for (let x = startX; x < canvas.width; x += gridSpacing) {
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, canvas.height);
-        ctx.stroke();
+    if (currentEpisodeReward < -50) {
+      showFallen();
     }
-    
-    // 2. Vẽ mặt đất tĩnh (Ground Baseline)
-    const groundY = canvas.height - 80;
-    ctx.strokeStyle = "#374151";
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(0, groundY);
-    ctx.lineTo(canvas.width, groundY);
-    ctx.stroke();
-    
-    // Điểm mốc trọng tâm robot trong Canvas (Đặt tại trung tâm)
-    const cx = canvas.width / 2;
-    const cy = groundY - 95 + hullVy * 20; // Dao động nhẹ trục Y theo vận tốc đứng
-    
-    // 3. Vẽ 10 Lidar Beams (Laser Scanner)
-    ctx.lineWidth = 1;
-    for (let i = 0; i < 10; i++) {
-        const lidarVal = obs[14 + i];
-        // Tính toán góc quét tuyệt đối từ -30 đến +30 độ xung quanh trục đứng của robot
-        const lidarAngleLocal = -Math.PI / 6 + i * (Math.PI / 3) / 9;
-        const absAngle = hullAngle + lidarAngleLocal + Math.PI / 2;
-        
-        // Quét khoảng cách tối đa 160 pixel
-        const maxRange = 160;
-        const beamLen = lidarVal * maxRange;
-        
-        const beamEndX = cx + beamLen * Math.sin(absAngle);
-        const beamEndY = cy + beamLen * Math.cos(absAngle);
-        
-        ctx.beginPath();
-        ctx.moveTo(cx, cy);
-        ctx.lineTo(beamEndX, beamEndY);
-        
-        // Đổi màu neon đỏ nếu khoảng cách phát hiện vật cản/mặt đất ngắn
-        if (lidarVal < 0.95) {
-            ctx.strokeStyle = "rgba(239, 68, 68, 0.2)";
-            ctx.stroke();
-            
-            // Vẽ điểm đỏ laser phản xạ
-            ctx.fillStyle = "#ef4444";
-            ctx.beginPath();
-            ctx.arc(beamEndX, beamEndY, 2.5, 0, Math.PI * 2);
-            ctx.fill();
-        } else {
-            ctx.strokeStyle = COLORS.lidarGreen;
-            ctx.stroke();
-        }
+
+    // Khi Episode kết thúc, đóng WebSocket và yêu cầu người dùng nhấn Launch để chạy lại
+    isRunning = false;
+    if (ws) {
+      ws.close();
+      ws = null;
     }
+    updateButtons();
     
-    // 4. Vẽ Chân Robot (Legs) - Leg 2 vẽ trước (ở phía sau) rồi tới Leg 1 (ở phía trước)
-    drawLeg(cx, cy, hullAngle, hip2, knee2, contact2, COLORS.leg2);
-    drawLeg(cx, cy, hullAngle, hip1, knee1, contact1, COLORS.leg1);
-    
-    // 5. Vẽ Thân Robot (Hull Chassis)
-    ctx.save();
-    ctx.translate(cx, cy);
-    ctx.rotate(hullAngle);
-    
-    // Vẽ khối hộp thân (Rounded Chassis)
-    ctx.fillStyle = COLORS.hullFill;
-    ctx.strokeStyle = COLORS.hullOutline;
-    ctx.lineWidth = 3.5;
-    ctx.shadowBlur = 12;
-    ctx.shadowColor = COLORS.hullOutline;
-    
-    ctx.beginPath();
-    ctx.roundRect(-HULL_W / 2, -HULL_H / 2, HULL_W, HULL_H, 6);
-    ctx.fill();
-    ctx.stroke();
-    ctx.shadowBlur = 0; // Tắt shadow cho các nét tiếp theo
-    
-    // Vẽ buồng điều khiển trung tâm (Futuristic windshield)
-    ctx.fillStyle = "rgba(0, 229, 255, 0.4)";
-    ctx.beginPath();
-    ctx.moveTo(10, -HULL_H / 2 + 3);
-    ctx.lineTo(HULL_W / 2 - 4, -HULL_H / 2 + 3);
-    ctx.lineTo(HULL_W / 2 - 12, 2);
-    ctx.lineTo(10, 2);
-    ctx.closePath();
-    ctx.fill();
-    
-    ctx.restore();
-}
-
-function drawLeg(cx, cy, hullAngle, hipAngle, kneeAngle, contact, color) {
-    // Vị trí khớp hông tuyệt đối (Có lệch nhẹ so với tâm Hull)
-    const hipXLocal = -8; // Đặt khớp hông lệch sau một chút
-    const hipYLocal = 8;
-    
-    const cosHA = Math.cos(hullAngle);
-    const sinHA = Math.sin(hullAngle);
-    const hipX = cx + hipXLocal * cosHA - hipYLocal * sinHA;
-    const hipY = cy + hipXLocal * sinHA + hipYLocal * cosHA;
-    
-    // Góc Thigh (Đùi) tuyệt đối
-    const thighAngle = hullAngle + hipAngle + Math.PI / 2;
-    const kneeX = hipX + L1 * Math.sin(thighAngle);
-    const kneeY = hipY + L1 * Math.cos(thighAngle);
-    
-    // Góc Shin (Cẳng chân) tuyệt đối
-    const shinAngle = thighAngle + kneeAngle;
-    const footX = kneeX + L2 * Math.sin(shinAngle);
-    const footY = kneeY + L2 * Math.cos(shinAngle);
-    
-    // Vẽ đùi (Thigh)
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 5;
-    ctx.lineCap = "round";
-    ctx.beginPath();
-    ctx.moveTo(hipX, hipY);
-    ctx.lineTo(kneeX, kneeY);
-    ctx.stroke();
-    
-    // Vẽ cẳng chân (Shin)
-    ctx.beginPath();
-    ctx.moveTo(kneeX, kneeY);
-    ctx.lineTo(footX, footY);
-    ctx.stroke();
-    
-    // Vẽ bàn chân (Foot/Sole)
-    ctx.lineWidth = 3;
-    const footW = 14;
-    ctx.beginPath();
-    ctx.moveTo(footX - footW / 2, footY);
-    ctx.lineTo(footX + footW / 2, footY);
-    ctx.stroke();
-    
-    // Khớp gối & khớp hông (Neon Joints)
-    ctx.fillStyle = "#ffffff";
-    ctx.beginPath();
-    ctx.arc(kneeX, kneeY, 4, 0, Math.PI * 2);
-    ctx.fill();
-    
-    ctx.beginPath();
-    ctx.arc(hipX, hipY, 5, 0, Math.PI * 2);
-    ctx.fill();
-    
-    // Vẽ vòng hào quang tiếp đất nếu chân chạm đất (Contact Glow)
-    if (contact > 0.5) {
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 2;
-        ctx.shadowBlur = 10;
-        ctx.shadowColor = color;
-        ctx.beginPath();
-        ctx.arc(footX, footY, 8, 0, Math.PI, true);
-        ctx.stroke();
-        ctx.shadowBlur = 0;
-    }
-}
-
-// --- CORE UTILITIES ---
-
-function logToTerminal(text, type = "normal") {
-    const term = document.getElementById("terminalWindow");
-    if (!term) return;
-    
-    const line = document.createElement("div");
-    line.className = "terminal-line " + type;
-    
-    // Thêm timestamp ngắn gọn
-    const timeStr = new Date().toLocaleTimeString();
-    line.innerText = `[${timeStr}] ${text}`;
-    
-    term.appendChild(line);
-    term.scrollTop = term.scrollHeight; // Tự động cuộn xuống dưới
-}
-
-function isLineInTerminal(lineText) {
-    const term = document.getElementById("terminalWindow");
-    const lines = term.getElementsByClassName("terminal-line");
-    // Kiểm tra trong 15 dòng cuối
-    const startIdx = Math.max(0, lines.length - 15);
-    for (let i = startIdx; i < lines.length; i++) {
-        if (lines[i].innerText.includes(lineText)) return true;
-    }
-    return false;
-}
-
-// --- INIT PAGE ---
-window.addEventListener("DOMContentLoaded", () => {
-    initChart();
-    
-    // Vẽ khung canvas trống ban đầu đẹp mắt
-    ctx.fillStyle = COLORS.bg;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = "rgba(255, 255, 255, 0.15)";
-    ctx.font = "14px Outfit";
-    ctx.textAlign = "center";
-    ctx.fillText("Interactive Radar Visualizer Off • Click Start Live Scan", canvas.width / 2, canvas.height / 2);
-    
-    // Thăm dò trạng thái lúc tải trang
-    pollTrainStatus();
-    
-    // Nếu huấn luyện đang hoạt động, thiết lập polling liên tục
+    // Hiện overlay thông báo hoàn thành episode sau một khoảng trễ ngắn
     setTimeout(() => {
-        const text = document.getElementById("train-status-text").innerText;
-        if (text === "Training Active") {
-            trainPollInterval = setInterval(pollTrainStatus, 1000);
-        }
-    }, 1200);
+      showOverlay('🔁', 'Episode Finished', 'Simulation paused. Click "Launch Live Simulation" to start a new episode with current settings');
+    }, 1000);
+  }
+}
+
+function updateStatValue(el, value) {
+  el.textContent = value;
+  const num = parseFloat(value);
+  el.className = 'stat-value ' + (num > 0 ? 'positive' : num < -50 ? 'negative' : '');
+}
+
+// ============================================================
+// HUMANOID ROBOT RENDERER
+// ============================================================
+
+// BipedalWalker-v3 observation indices:
+//  0: hull_angle           1: hull_angular_vel
+//  2: vel_x                3: vel_y
+//  4: hip_1_angle          5: hip_1_angular_vel
+//  6: knee_1_angle         7: knee_1_angular_vel
+//  8: leg_1_ground_contact
+//  9: hip_2_angle         10: hip_2_angular_vel
+// 11: knee_2_angle        12: knee_2_angular_vel
+// 13: leg_2_ground_contact
+// 14-23: lidar readings
+
+function resizeCanvas() {
+  const rect = canvas.parentElement.getBoundingClientRect();
+  if (canvas.width !== rect.width || canvas.height !== rect.height) {
+    canvas.width = rect.width;
+    canvas.height = rect.height;
+  }
+}
+
+function getGroundHeight(x, seed) {
+  if (x < 1.5) return 0; // 1.5m đầu tiên phẳng để xuất phát vững vàng
+  
+  // Chuyển tiếp mượt từ phẳng sang gồ ghề giữa 1.5m và 3.0m
+  const transition = Math.min(1, Math.max(0, (x - 1.5) / 1.5));
+  
+  // Tổng các sóng sine/cosine có tần số khác nhau, lệch pha bằng seed
+  const wave1 = Math.sin(x * 0.35 + seed) * 0.45;
+  const wave2 = Math.cos(x * 0.85 - seed * 0.7) * 0.20;
+  const wave3 = Math.sin(x * 1.85 + seed * 1.3) * 0.08;
+  const wave4 = Math.cos(x * 3.5 + seed * 2.1) * 0.03;
+  
+  return (wave1 + wave2 + wave3 + wave4) * transition;
+}
+
+function drawScene(obs) {
+  const W = canvas.width;
+  const H = canvas.height;
+
+  // --- Background ---
+  ctx.clearRect(0, 0, W, H);
+
+  // Sky gradient
+  const sky = ctx.createLinearGradient(0, 0, 0, H);
+  sky.addColorStop(0, '#06060f');
+  sky.addColorStop(1, '#0d0d1f');
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, W, H);
+
+  // Ground baseline position
+  const groundY = H * 0.72;
+
+  // Tọa độ Y hông robot nhấp nhô theo mặt đồi tại vị trí posX hiện tại
+  const robotY = groundY - getGroundHeight(posX, terrainSeed) * 60 - 75;
+
+  // Draw lidar beams (obs 14–23)
+  drawLidar(obs, W / 2, robotY);
+
+  // Draw moving ground grid / wavy terrain
+  drawGround(obs, groundY, W, H);
+
+  // Draw humanoid robot
+  const hullAngle = obs[0];
+  const contact1  = obs[8] > 0.5;
+  const contact2  = obs[13] > 0.5;
+
+  const hip1Angle  = obs[4];
+  const knee1Angle = obs[6];
+  const hip2Angle  = obs[9];
+  const knee2Angle = obs[11];
+
+  drawHumanoid(
+    W / 2, robotY,
+    hullAngle,
+    hip1Angle, knee1Angle, contact1,
+    hip2Angle, knee2Angle, contact2
+  );
+}
+
+function drawGround(obs, groundY, W, H) {
+  // Vẽ đa giác kín mặt đất đồi núi gập ghềnh
+  ctx.beginPath();
+  ctx.moveTo(0, H);
+  
+  const stepPx = 6;
+  for (let px = 0; px <= W + stepPx; px += stepPx) {
+    const globalX = posX + (px - W / 2) / 60;
+    const y = groundY - getGroundHeight(globalX, terrainSeed) * 60;
+    ctx.lineTo(px, y);
+  }
+  
+  ctx.lineTo(W, H);
+  ctx.closePath();
+
+  // Gradient màu nền đất (Violet -> Cyan -> Dark)
+  const groundGrad = ctx.createLinearGradient(0, groundY - 40, 0, H);
+  groundGrad.addColorStop(0, 'rgba(124, 58, 237, 0.25)'); // Violet phát sáng đỉnh đồi
+  groundGrad.addColorStop(0.3, 'rgba(6, 182, 212, 0.15)'); // Cyan lưng chừng
+  groundGrad.addColorStop(1, 'rgba(6, 6, 15, 0.95)'); // Tối đáy
+  ctx.fillStyle = groundGrad;
+  ctx.fill();
+
+  // Vẽ đường viền neon phát sáng
+  ctx.beginPath();
+  for (let px = 0; px <= W; px += stepPx) {
+    const globalX = posX + (px - W / 2) / 60;
+    const y = groundY - getGroundHeight(globalX, terrainSeed) * 60;
+    if (px === 0) ctx.moveTo(px, y);
+    else ctx.lineTo(px, y);
+  }
+
+  const glowGrad = ctx.createLinearGradient(0, 0, W, 0);
+  glowGrad.addColorStop(0, 'rgba(124, 58, 237, 0.2)');
+  glowGrad.addColorStop(0.3, 'rgba(124, 58, 237, 0.9)');
+  glowGrad.addColorStop(0.7, 'rgba(6, 182, 212, 0.9)');
+  glowGrad.addColorStop(1, 'rgba(6, 182, 212, 0.2)');
+
+  ctx.strokeStyle = glowGrad;
+  ctx.lineWidth = 3;
+  ctx.shadowColor = 'rgba(6, 182, 212, 0.5)';
+  ctx.shadowBlur = 10;
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  // Vẽ các vạch mốc mét m
+  const minX = posX - (W / 2) / 60;
+  const maxX = posX + (W / 2) / 60;
+  const startM = Math.floor(minX);
+  const endM = Math.ceil(maxX);
+
+  ctx.font = '10px monospace';
+  ctx.textAlign = 'center';
+
+  for (let m = startM; m <= endM; m++) {
+    if (m < 0) continue;
+    const px = W / 2 + (m - posX) * 60;
+    const groundYAtM = groundY - getGroundHeight(m, terrainSeed) * 60;
+
+    // Vạch đứng nhỏ phát sáng
+    ctx.strokeStyle = 'rgba(6, 182, 212, 0.35)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(px, groundYAtM);
+    ctx.lineTo(px, groundYAtM + 12);
+    ctx.stroke();
+
+    // Nhãn chữ m
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.65)';
+    ctx.fillText(`${m}m`, px, groundYAtM + 25);
+  }
+}
+
+function drawLidar(obs, cx, cy) {
+  const lidar = obs.slice(14, 24); // 10 readings
+  const hullAngle = obs[0] || 0;
+  const lidarRangePx = 5.33 * 60; // 320px
+
+  lidar.forEach((dist, i) => {
+    // Quét tia lidar xung quanh hướng thẳng đứng, nghiêng theo góc hullAngle
+    const angle = hullAngle + Math.PI / 2 + (i - 4.5) * 0.15;
+    const len = dist * lidarRangePx;
+
+    const endX = cx + Math.cos(angle) * len;
+    const endY = cy + Math.sin(angle) * len;
+
+    const isNear = dist < 0.4;
+    const color = isNear ? 'rgba(239, 68, 68, 0.65)' : 'rgba(6, 182, 212, 0.3)';
+
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(endX, endY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Vẽ điểm va chạm neon sáng đẹp trên mặt đất
+    if (dist < 1.0) {
+      ctx.shadowColor = isNear ? 'rgba(239, 68, 68, 0.8)' : 'rgba(6, 182, 212, 0.8)';
+      ctx.shadowBlur = 8;
+      ctx.fillStyle = isNear ? 'rgba(255, 100, 100, 1)' : 'rgba(100, 255, 255, 1)';
+      ctx.beginPath();
+      ctx.arc(endX, endY, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+  });
+}
+
+function drawHumanoid(cx, cy, hullAngle, hip1, knee1, contact1, hip2, knee2, contact2) {
+  // Scale for drawing
+  const THIGH_LEN = 52;
+  const SHIN_LEN  = 48;
+  const BODY_W    = 22;
+  const BODY_H    = 38;
+  const HEAD_R    = 14;
+
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(hullAngle);
+
+  // --- BODY (torso) ---
+  drawRoundedRect(ctx, -BODY_W / 2, -BODY_H / 2, BODY_W, BODY_H, 8,
+    createBodyGrad(ctx, BODY_H));
+
+  // Chest detail line
+  ctx.strokeStyle = 'rgba(6, 182, 212, 0.3)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(-BODY_W / 2 + 4, -4);
+  ctx.lineTo(BODY_W / 2 - 4, -4);
+  ctx.stroke();
+
+  // --- HEAD ---
+  ctx.save();
+  ctx.translate(0, -BODY_H / 2 - HEAD_R - 4);
+  ctx.rotate(-hullAngle * 0.3); // slight counter-rotation for natural feel
+  
+  // Head glow
+  ctx.shadowColor = 'rgba(124, 58, 237, 0.5)';
+  ctx.shadowBlur = 12;
+  
+  const headGrad = ctx.createRadialGradient(-3, -3, 2, 0, 0, HEAD_R);
+  headGrad.addColorStop(0, '#a78bfa');
+  headGrad.addColorStop(1, '#5b21b6');
+  ctx.fillStyle = headGrad;
+  ctx.beginPath();
+  ctx.arc(0, 0, HEAD_R, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Visor / eyes
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = 'rgba(6, 182, 212, 0.9)';
+  ctx.beginPath();
+  ctx.roundRect(-7, -4, 6, 5, 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.roundRect(1, -4, 6, 5, 2);
+  ctx.fill();
+  ctx.restore();
+
+  // --- ARMS (swing opposite to legs) ---
+  const armSwing = (hip1 + hip2) * 0.3;
+
+  // Left arm
+  ctx.save();
+  ctx.translate(-BODY_W / 2, -BODY_H / 4);
+  ctx.rotate(-armSwing - 0.3);
+  ctx.strokeStyle = 'rgba(148, 163, 184, 0.7)';
+  ctx.lineWidth = 7;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(-8, 28);
+  ctx.stroke();
+  // Forearm
+  ctx.save();
+  ctx.translate(-8, 28);
+  ctx.rotate(0.5);
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(-4, 22);
+  ctx.stroke();
+  ctx.restore();
+  ctx.restore();
+
+  // Right arm
+  ctx.save();
+  ctx.translate(BODY_W / 2, -BODY_H / 4);
+  ctx.rotate(armSwing + 0.3);
+  ctx.strokeStyle = 'rgba(148, 163, 184, 0.7)';
+  ctx.lineWidth = 7;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(8, 28);
+  ctx.stroke();
+  ctx.save();
+  ctx.translate(8, 28);
+  ctx.rotate(-0.5);
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(4, 22);
+  ctx.stroke();
+  ctx.restore();
+  ctx.restore();
+
+  // --- LEGS ---
+  // Hip pivot at bottom-center of torso
+  const hipY = BODY_H / 2;
+
+  // Leg 1 (left) — drawn behind
+  drawLeg(ctx, -BODY_W / 4, hipY, hip1, knee1, contact1, THIGH_LEN, SHIN_LEN, false);
+  // Leg 2 (right) — drawn in front
+  drawLeg(ctx, BODY_W / 4, hipY, hip2, knee2, contact2, THIGH_LEN, SHIN_LEN, true);
+
+  ctx.restore();
+}
+
+function drawLeg(ctx, x, y, hipAngle, kneeAngle, contact, thighLen, shinLen, isFront) {
+  const alpha = isFront ? 1.0 : 0.65;
+  
+  ctx.save();
+  ctx.translate(x, y);
+
+  // Thigh
+  ctx.save();
+  ctx.rotate(hipAngle);
+
+  // Thigh segment
+  const thighColor = isFront ? `rgba(99, 102, 241, ${alpha})` : `rgba(67, 56, 202, ${alpha})`;
+  ctx.strokeStyle = thighColor;
+  ctx.lineWidth = isFront ? 12 : 10;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(0, thighLen);
+  ctx.stroke();
+
+  // Knee joint circle
+  ctx.fillStyle = isFront ? 'rgba(129, 140, 248, 0.9)' : 'rgba(99, 102, 241, 0.7)';
+  ctx.beginPath();
+  ctx.arc(0, thighLen, 5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Shin
+  ctx.translate(0, thighLen);
+  ctx.rotate(kneeAngle);
+
+  ctx.strokeStyle = isFront
+    ? `rgba(79, 70, 229, ${alpha})`
+    : `rgba(55, 48, 163, ${alpha})`;
+  ctx.lineWidth = isFront ? 10 : 8;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(0, shinLen);
+  ctx.stroke();
+
+  // Foot
+  ctx.translate(0, shinLen);
+
+  if (contact) {
+    // Ground contact glow
+    ctx.shadowColor = 'rgba(6, 182, 212, 0.8)';
+    ctx.shadowBlur = 16;
+    ctx.fillStyle = 'rgba(6, 182, 212, 0.9)';
+  } else {
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = isFront ? 'rgba(129, 140, 248, 0.8)' : 'rgba(99, 102, 241, 0.6)';
+  }
+
+  ctx.beginPath();
+  ctx.roundRect(-10, -4, 20, 8, 4);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  ctx.restore();
+  ctx.restore();
+}
+
+function createBodyGrad(ctx, bodyH) {
+  const g = ctx.createLinearGradient(0, -bodyH / 2, 0, bodyH / 2);
+  g.addColorStop(0, 'rgba(139, 92, 246, 0.9)');
+  g.addColorStop(0.5, 'rgba(109, 40, 217, 0.85)');
+  g.addColorStop(1, 'rgba(91, 33, 182, 0.8)');
+  return g;
+}
+
+function drawRoundedRect(ctx, x, y, w, h, r, fillStyle) {
+  ctx.fillStyle = fillStyle;
+  ctx.shadowColor = 'rgba(124, 58, 237, 0.4)';
+  ctx.shadowBlur = 20;
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, r);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  // Border
+  ctx.strokeStyle = 'rgba(167, 139, 250, 0.5)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, r);
+  ctx.stroke();
+}
+
+// ============================================================
+// IDLE / FALLEN CANVAS STATES
+// ============================================================
+function drawIdleScreen() {
+  resizeCanvas();
+  const W = canvas.width;
+  const H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+
+  const bg = ctx.createLinearGradient(0, 0, 0, H);
+  bg.addColorStop(0, '#06060f');
+  bg.addColorStop(1, '#0d0d1f');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, H);
+
+  // Ground
+  ctx.strokeStyle = 'rgba(124, 58, 237, 0.3)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(0, H * 0.72);
+  ctx.lineTo(W, H * 0.72);
+  ctx.stroke();
+
+  // Draw static humanoid silhouette in idle pose
+  drawHumanoid(W / 2, H * 0.72 - 80, 0, 0.1, 0.2, false, -0.1, 0.2, false);
+}
+
+function showFallen() {
+  fallenOverlay.classList.add('show');
+}
+
+function hideFallen() {
+  fallenOverlay.classList.remove('show');
+}
+
+function hideOverlay() {
+  overlay.classList.add('hidden');
+}
+
+function showOverlay(icon, text, sub) {
+  overlay.classList.remove('hidden');
+  overlay.querySelector('.overlay-icon').textContent = icon;
+  overlay.querySelector('.overlay-text').textContent = text;
+  overlay.querySelector('.overlay-sub').textContent = sub;
+}
+
+// ============================================================
+// SLIDERS
+// ============================================================
+function initSliders() {
+  const onSliderChange = () => {
+    hideFallen();
+    if (isRunning || ws) {
+      if (ws) {
+        ws.close();
+        ws = null;
+      }
+      isRunning = false;
+      isPaused = false;
+      updateButtons();
+      drawIdleScreen();
+    }
+    needsChartReset = true;
+    showOverlay('⚙️', 'Parameters Changed', 'Please click "Launch Live Simulation" to apply the new settings.');
+  };
+
+  sliderNoise.addEventListener('input', () => {
+    params.noise = parseFloat(sliderNoise.value);
+    valNoise.textContent = params.noise.toFixed(2);
+    onSliderChange();
+  });
+
+  sliderWind.addEventListener('input', () => {
+    params.wind = parseFloat(sliderWind.value);
+    valWind.textContent = (params.wind >= 0 ? '+' : '') + params.wind.toFixed(2);
+    onSliderChange();
+  });
+
+  sliderGravity.addEventListener('input', () => {
+    params.gravity = parseFloat(sliderGravity.value);
+    valGravity.textContent = params.gravity.toFixed(1) + 'g';
+    onSliderChange();
+  });
+}
+
+// ============================================================
+// BUTTONS
+// ============================================================
+function updateButtons() {
+  btnRun.disabled = isRunning;
+  btnPause.disabled = !isRunning;
+  btnReset.disabled = false;
+}
+
+function initButtons() {
+  btnRun.addEventListener('click', () => {
+    connectAndRun();
+  });
+
+  btnPause.addEventListener('click', () => {
+    isPaused = !isPaused;
+    btnPause.textContent = isPaused ? '▶  Resume' : '⏸  Pause';
+  });
+
+  btnReset.addEventListener('click', () => {
+    hideFallen();
+    if (ws) {
+      ws.close();
+      ws = null;
+    }
+    isRunning = false;
+    isPaused = false;
+    currentEpisodeReward = 0;
+    currentSteps = 0;
+    posX = 0;
+    terrainSeed = Math.random() * 1000; // Đổi đồi ngẫu nhiên mới
+    statReward.textContent = '0.0';
+    statSteps.textContent = '0';
+    
+    needsChartReset = true;
+    
+    updateButtons();
+    drawIdleScreen(); // Đưa robot về idle silhouette
+    showOverlay('🤖', 'Simulation Reset', 'Terrain randomized. Click "Launch Live Simulation" to start');
+  });
+
+  // Speed buttons
+  document.querySelectorAll('.speed-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.speed-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentSpeed = parseInt(btn.dataset.speed);
+      sendMessage({ action: 'set_speed', speed: currentSpeed });
+    });
+  });
+}
+
+function loadDiagnostics() {
+  fetch('/api/config')
+    .then(res => res.json())
+    .then(config => {
+      const modelTargetEl = document.querySelector('.info-val.highlight');
+      if (modelTargetEl && config.EPISODE !== undefined) {
+        modelTargetEl.textContent = `best_model.pth (Ep ${config.EPISODE})`;
+      }
+    })
+    .catch(err => console.error('Failed to load diagnostics:', err));
+}
+
+// ============================================================
+// INIT
+// ============================================================
+window.addEventListener('load', () => {
+  initChart();
+  initSliders();
+  initButtons();
+  drawIdleScreen();
+  setStatus('disconnected');
+  updateButtons();
+  btnPause.disabled = true;
+  loadDiagnostics();
+});
+
+window.addEventListener('resize', () => {
+  if (lastObs) drawScene(lastObs);
+  else drawIdleScreen();
 });
