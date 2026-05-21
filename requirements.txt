@@ -1,0 +1,19 @@
+# Cần cài đặt swig trước tiên để biên dịch Box2D trên Windows không bị lỗi
+swig
+
+# Chia tách gymnasium[box2d] để tránh việc pip tự động kéo gói 'pygame' bị lỗi biên dịch
+gymnasium
+box2d-py
+pygame-ce
+
+# Deep Learning và tính toán khoa học
+torch
+numpy
+
+# Giao diện Web hiển thị kết quả (FastAPI)
+fastapi
+uvicorn
+jinja2
+
+# Công cụ theo dõi và ghi log quá trình huấn luyện
+tensorboard
