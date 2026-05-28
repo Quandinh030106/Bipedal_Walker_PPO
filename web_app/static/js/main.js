@@ -22,6 +22,8 @@ let lastObs = null;
 let posX = 0;
 let terrainSeed = Math.random() * 1000;
 let needsChartReset = true;
+let currentSessionEpisodes = 0;
+const MAX_SESSION_EPISODES = 10;
 
 
 // --- DOM refs ---
@@ -213,18 +215,34 @@ function handleSimState(data) {
       showFallen();
     }
 
-    // Khi Episode kết thúc, đóng WebSocket và yêu cầu người dùng nhấn Launch để chạy lại
-    isRunning = false;
+    // Close current WebSocket session cleanly
     if (ws) {
       ws.close();
       ws = null;
     }
+    isRunning = false;
     updateButtons();
-    
-    // Hiện overlay thông báo hoàn thành episode sau một khoảng trễ ngắn
-    setTimeout(() => {
-      showOverlay('🔁', 'Episode Finished', 'Simulation paused. Click "Launch Live Simulation" to start a new episode with current settings');
-    }, 1000);
+
+    currentSessionEpisodes++;
+
+    if (currentSessionEpisodes < MAX_SESSION_EPISODES) {
+      // Show transitional overlay and auto-launch next episode
+      showOverlay('🔁', `Episode ${currentSessionEpisodes} Completed`, `Benchmark progress: ${currentSessionEpisodes}/${MAX_SESSION_EPISODES}. Next episode starting in 1.5s...`);
+      
+      const captureSessionId = currentSessionEpisodes;
+      setTimeout(() => {
+        // If the user aborted/reset the benchmark during the delay, currentSessionEpisodes is reset to 0
+        if (currentSessionEpisodes === 0 || currentSessionEpisodes !== captureSessionId) return;
+        connectAndRun();
+      }, 1500);
+    } else {
+      // 10-episode benchmark is complete
+      const sum = episodeRewards.reduce((a, b) => a + b, 0);
+      const avg = sum / episodeRewards.length;
+      
+      showOverlay('🏆', 'Benchmark Completed! 🎉', `Average Reward over ${MAX_SESSION_EPISODES} episodes: ${avg.toFixed(1)}. Click "Launch Live Simulation" to re-run, or adjust sliders to try a new setup!`);
+      currentSessionEpisodes = 0; // Reset session counter for next click
+    }
   }
 }
 
@@ -664,6 +682,7 @@ function hideOverlay() {
 }
 
 function showOverlay(icon, text, sub) {
+  hideFallen();
   overlay.classList.remove('hidden');
   overlay.querySelector('.overlay-icon').textContent = icon;
   overlay.querySelector('.overlay-text').textContent = text;
@@ -687,6 +706,7 @@ function initSliders() {
       drawIdleScreen();
     }
     needsChartReset = true;
+    currentSessionEpisodes = 0; // Abort active evaluation session
     showOverlay('⚙️', 'Parameters Changed', 'Please click "Launch Live Simulation" to apply the new settings.');
   };
 
@@ -720,6 +740,8 @@ function updateButtons() {
 
 function initButtons() {
   btnRun.addEventListener('click', () => {
+    currentSessionEpisodes = 0;
+    needsChartReset = true;
     connectAndRun();
   });
 
@@ -744,6 +766,7 @@ function initButtons() {
     statSteps.textContent = '0';
     
     needsChartReset = true;
+    currentSessionEpisodes = 0; // Reset evaluation session
     
     updateButtons();
     drawIdleScreen(); // Đưa robot về idle silhouette
