@@ -61,14 +61,14 @@ function initChart() {
       datasets: [{
         label: 'Episode Reward',
         data: [],
-        borderColor: '#7c3aed',
-        backgroundColor: 'rgba(124, 58, 237, 0.08)',
-        borderWidth: 2,
+        borderColor: '#0ea5e9',
+        backgroundColor: 'rgba(14, 165, 233, 0.1)',
+        borderWidth: 3,
         tension: 0.4,
         fill: true,
-        pointRadius: 3,
-        pointBackgroundColor: '#7c3aed',
-        pointHoverRadius: 5
+        pointRadius: 4,
+        pointBackgroundColor: '#0ea5e9',
+        pointHoverRadius: 6
       }]
     },
     options: {
@@ -78,12 +78,12 @@ function initChart() {
       plugins: { legend: { display: false } },
       scales: {
         x: {
-          ticks: { color: '#475569', font: { size: 10 } },
-          grid: { color: 'rgba(255,255,255,0.04)' }
+          ticks: { color: '#475569', font: { family: 'Nunito', size: 10, weight: 'bold' } },
+          grid: { color: 'rgba(56, 189, 248, 0.15)' }
         },
         y: {
-          ticks: { color: '#475569', font: { size: 10 } },
-          grid: { color: 'rgba(255,255,255,0.04)' }
+          ticks: { color: '#475569', font: { family: 'Nunito', size: 10, weight: 'bold' } },
+          grid: { color: 'rgba(56, 189, 248, 0.15)' }
         }
       }
     }
@@ -281,8 +281,8 @@ function drawScene(obs) {
 
   // Sky gradient
   const sky = ctx.createLinearGradient(0, 0, 0, H);
-  sky.addColorStop(0, '#06060f');
-  sky.addColorStop(1, '#0d0d1f');
+  sky.addColorStop(0, '#bae6fd'); // Playful bright sky blue
+  sky.addColorStop(1, '#e0f2fe');
   ctx.fillStyle = sky;
   ctx.fillRect(0, 0, W, H);
 
@@ -331,11 +331,11 @@ function drawGround(obs, groundY, W, H) {
   ctx.lineTo(W, H);
   ctx.closePath();
 
-  // Gradient màu nền đất (Violet -> Cyan -> Dark)
+  // Gradient màu nền đất (Playful green grass)
   const groundGrad = ctx.createLinearGradient(0, groundY - 40, 0, H);
-  groundGrad.addColorStop(0, 'rgba(124, 58, 237, 0.25)'); // Violet phát sáng đỉnh đồi
-  groundGrad.addColorStop(0.3, 'rgba(6, 182, 212, 0.15)'); // Cyan lưng chừng
-  groundGrad.addColorStop(1, 'rgba(6, 6, 15, 0.95)'); // Tối đáy
+  groundGrad.addColorStop(0, '#86efac'); // Happy bright green grass
+  groundGrad.addColorStop(0.4, '#4ade80');
+  groundGrad.addColorStop(1, '#166534'); // Deep friendly garden green
   ctx.fillStyle = groundGrad;
   ctx.fill();
 
@@ -349,14 +349,14 @@ function drawGround(obs, groundY, W, H) {
   }
 
   const glowGrad = ctx.createLinearGradient(0, 0, W, 0);
-  glowGrad.addColorStop(0, 'rgba(124, 58, 237, 0.2)');
-  glowGrad.addColorStop(0.3, 'rgba(124, 58, 237, 0.9)');
-  glowGrad.addColorStop(0.7, 'rgba(6, 182, 212, 0.9)');
-  glowGrad.addColorStop(1, 'rgba(6, 182, 212, 0.2)');
+  glowGrad.addColorStop(0, 'rgba(34, 197, 94, 0.2)');
+  glowGrad.addColorStop(0.3, 'rgba(34, 197, 94, 0.95)');
+  glowGrad.addColorStop(0.7, 'rgba(16, 185, 129, 0.95)');
+  glowGrad.addColorStop(1, 'rgba(16, 185, 129, 0.2)');
 
   ctx.strokeStyle = glowGrad;
-  ctx.lineWidth = 3;
-  ctx.shadowColor = 'rgba(6, 182, 212, 0.5)';
+  ctx.lineWidth = 4;
+  ctx.shadowColor = 'rgba(34, 197, 94, 0.6)';
   ctx.shadowBlur = 10;
   ctx.stroke();
   ctx.shadowBlur = 0;
@@ -376,7 +376,7 @@ function drawGround(obs, groundY, W, H) {
     const groundYAtM = groundY - getGroundHeight(m, terrainSeed) * 60;
 
     // Vạch đứng nhỏ phát sáng
-    ctx.strokeStyle = 'rgba(6, 182, 212, 0.35)';
+    ctx.strokeStyle = 'rgba(21, 128, 61, 0.35)'; // dark green markers
     ctx.lineWidth = 1.5;
     ctx.beginPath();
     ctx.moveTo(px, groundYAtM);
@@ -384,7 +384,7 @@ function drawGround(obs, groundY, W, H) {
     ctx.stroke();
 
     // Nhãn chữ m
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.65)';
+    ctx.fillStyle = '#166534'; // clear readable green text
     ctx.fillText(`${m}m`, px, groundYAtM + 25);
   }
 }
@@ -403,10 +403,10 @@ function drawLidar(obs, cx, cy) {
     const endY = cy + Math.sin(angle) * len;
 
     const isNear = dist < 0.4;
-    const color = isNear ? 'rgba(239, 68, 68, 0.65)' : 'rgba(6, 182, 212, 0.3)';
+    const color = isNear ? 'rgba(244, 63, 94, 0.85)' : 'rgba(14, 165, 233, 0.55)';
 
     ctx.strokeStyle = color;
-    ctx.lineWidth = 1.5;
+    ctx.lineWidth = 2;
     ctx.setLineDash([4, 4]);
     ctx.beginPath();
     ctx.moveTo(cx, cy);
@@ -416,7 +416,7 @@ function drawLidar(obs, cx, cy) {
 
     // Vẽ điểm va chạm neon sáng đẹp trên mặt đất
     if (dist < 1.0) {
-      ctx.shadowColor = isNear ? 'rgba(239, 68, 68, 0.8)' : 'rgba(6, 182, 212, 0.8)';
+      ctx.shadowColor = isNear ? 'rgba(244, 63, 94, 0.9)' : 'rgba(14, 165, 233, 0.9)';
       ctx.shadowBlur = 8;
       ctx.fillStyle = isNear ? 'rgba(255, 100, 100, 1)' : 'rgba(100, 255, 255, 1)';
       ctx.beginPath();
@@ -444,7 +444,7 @@ function drawHumanoid(cx, cy, hullAngle, hip1, knee1, contact1, hip2, knee2, con
     createBodyGrad(ctx, BODY_H));
 
   // Chest detail line
-  ctx.strokeStyle = 'rgba(6, 182, 212, 0.3)';
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(-BODY_W / 2 + 4, -4);
@@ -457,12 +457,12 @@ function drawHumanoid(cx, cy, hullAngle, hip1, knee1, contact1, hip2, knee2, con
   ctx.rotate(-hullAngle * 0.3); // slight counter-rotation for natural feel
   
   // Head glow
-  ctx.shadowColor = 'rgba(124, 58, 237, 0.5)';
+  ctx.shadowColor = 'rgba(14, 165, 233, 0.4)';
   ctx.shadowBlur = 12;
   
   const headGrad = ctx.createRadialGradient(-3, -3, 2, 0, 0, HEAD_R);
-  headGrad.addColorStop(0, '#a78bfa');
-  headGrad.addColorStop(1, '#5b21b6');
+  headGrad.addColorStop(0, '#38bdf8'); // sky blue head
+  headGrad.addColorStop(1, '#0284c7');
   ctx.fillStyle = headGrad;
   ctx.beginPath();
   ctx.arc(0, 0, HEAD_R, 0, Math.PI * 2);
@@ -470,7 +470,7 @@ function drawHumanoid(cx, cy, hullAngle, hip1, knee1, contact1, hip2, knee2, con
 
   // Visor / eyes
   ctx.shadowBlur = 0;
-  ctx.fillStyle = 'rgba(6, 182, 212, 0.9)';
+  ctx.fillStyle = '#ffffff'; // friendly bright white eyes
   ctx.beginPath();
   ctx.roundRect(-7, -4, 6, 5, 2);
   ctx.fill();
@@ -486,7 +486,7 @@ function drawHumanoid(cx, cy, hullAngle, hip1, knee1, contact1, hip2, knee2, con
   ctx.save();
   ctx.translate(-BODY_W / 2, -BODY_H / 4);
   ctx.rotate(-armSwing - 0.3);
-  ctx.strokeStyle = 'rgba(148, 163, 184, 0.7)';
+  ctx.strokeStyle = '#64748b'; // friendly gray arms
   ctx.lineWidth = 7;
   ctx.lineCap = 'round';
   ctx.beginPath();
@@ -508,7 +508,7 @@ function drawHumanoid(cx, cy, hullAngle, hip1, knee1, contact1, hip2, knee2, con
   ctx.save();
   ctx.translate(BODY_W / 2, -BODY_H / 4);
   ctx.rotate(armSwing + 0.3);
-  ctx.strokeStyle = 'rgba(148, 163, 184, 0.7)';
+  ctx.strokeStyle = '#64748b';
   ctx.lineWidth = 7;
   ctx.lineCap = 'round';
   ctx.beginPath();
@@ -548,7 +548,7 @@ function drawLeg(ctx, x, y, hipAngle, kneeAngle, contact, thighLen, shinLen, isF
   ctx.rotate(hipAngle);
 
   // Thigh segment
-  const thighColor = isFront ? `rgba(99, 102, 241, ${alpha})` : `rgba(67, 56, 202, ${alpha})`;
+  const thighColor = isFront ? `rgba(129, 140, 248, ${alpha})` : `rgba(79, 70, 229, ${alpha})`;
   ctx.strokeStyle = thighColor;
   ctx.lineWidth = isFront ? 12 : 10;
   ctx.lineCap = 'round';
@@ -568,8 +568,8 @@ function drawLeg(ctx, x, y, hipAngle, kneeAngle, contact, thighLen, shinLen, isF
   ctx.rotate(kneeAngle);
 
   ctx.strokeStyle = isFront
-    ? `rgba(79, 70, 229, ${alpha})`
-    : `rgba(55, 48, 163, ${alpha})`;
+    ? `rgba(99, 102, 241, ${alpha})`
+    : `rgba(67, 56, 202, ${alpha})`;
   ctx.lineWidth = isFront ? 10 : 8;
   ctx.lineCap = 'round';
   ctx.beginPath();
@@ -581,10 +581,10 @@ function drawLeg(ctx, x, y, hipAngle, kneeAngle, contact, thighLen, shinLen, isF
   ctx.translate(0, shinLen);
 
   if (contact) {
-    // Ground contact glow
-    ctx.shadowColor = 'rgba(6, 182, 212, 0.8)';
+    // Ground contact splash / lawn green glow
+    ctx.shadowColor = 'rgba(34, 197, 94, 0.9)';
     ctx.shadowBlur = 16;
-    ctx.fillStyle = 'rgba(6, 182, 212, 0.9)';
+    ctx.fillStyle = '#22c55e';
   } else {
     ctx.shadowBlur = 0;
     ctx.fillStyle = isFront ? 'rgba(129, 140, 248, 0.8)' : 'rgba(99, 102, 241, 0.6)';
@@ -601,15 +601,15 @@ function drawLeg(ctx, x, y, hipAngle, kneeAngle, contact, thighLen, shinLen, isF
 
 function createBodyGrad(ctx, bodyH) {
   const g = ctx.createLinearGradient(0, -bodyH / 2, 0, bodyH / 2);
-  g.addColorStop(0, 'rgba(139, 92, 246, 0.9)');
-  g.addColorStop(0.5, 'rgba(109, 40, 217, 0.85)');
-  g.addColorStop(1, 'rgba(91, 33, 182, 0.8)');
+  g.addColorStop(0, '#f97316'); // playful orange chest
+  g.addColorStop(0.5, '#f97316');
+  g.addColorStop(1, '#ea580c');
   return g;
 }
 
 function drawRoundedRect(ctx, x, y, w, h, r, fillStyle) {
   ctx.fillStyle = fillStyle;
-  ctx.shadowColor = 'rgba(124, 58, 237, 0.4)';
+  ctx.shadowColor = 'rgba(249, 115, 22, 0.25)';
   ctx.shadowBlur = 20;
   ctx.beginPath();
   ctx.roundRect(x, y, w, h, r);
@@ -617,8 +617,8 @@ function drawRoundedRect(ctx, x, y, w, h, r, fillStyle) {
   ctx.shadowBlur = 0;
 
   // Border
-  ctx.strokeStyle = 'rgba(167, 139, 250, 0.5)';
-  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 2.5;
   ctx.beginPath();
   ctx.roundRect(x, y, w, h, r);
   ctx.stroke();
@@ -634,14 +634,14 @@ function drawIdleScreen() {
   ctx.clearRect(0, 0, W, H);
 
   const bg = ctx.createLinearGradient(0, 0, 0, H);
-  bg.addColorStop(0, '#06060f');
-  bg.addColorStop(1, '#0d0d1f');
+  bg.addColorStop(0, '#bae6fd');
+  bg.addColorStop(1, '#e0f2fe');
   ctx.fillStyle = bg;
   ctx.fillRect(0, 0, W, H);
 
   // Ground
-  ctx.strokeStyle = 'rgba(124, 58, 237, 0.3)';
-  ctx.lineWidth = 2;
+  ctx.strokeStyle = '#4ade80';
+  ctx.lineWidth = 4;
   ctx.beginPath();
   ctx.moveTo(0, H * 0.72);
   ctx.lineTo(W, H * 0.72);
